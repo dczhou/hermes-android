@@ -12,6 +12,10 @@ if (keystorePath.exists()) {
    keystoreProperties.load(FileInputStream(keystorePath))
 }
 
+// True only when key.properties contains a non-empty storeFile entry.
+val hasReleaseKeystore = keystoreProperties.containsKey("storeFile") &&
+   keystoreProperties["storeFile"].toString().isNotEmpty()
+
 android {
    namespace = "com.hermesagent.hermes_android"
    compileSdk = 36
@@ -32,7 +36,7 @@ android {
 
    signingConfigs {
        create("release") {
-           if (keystoreProperties.containsKey("storeFile")) {
+           if (hasReleaseKeystore) {
                storeFile = file(keystoreProperties["storeFile"] as String)
                storePassword = keystoreProperties["storePassword"] as String
                keyAlias = keystoreProperties["keyAlias"] as String
@@ -43,7 +47,12 @@ android {
 
    buildTypes {
        release {
-           signingConfig = signingConfigs.getByName("release")
+           // Use release keystore when secrets are configured;
+           // otherwise fall back to debug signing (e.g. forked repos).
+           signingConfig = if (hasReleaseKeystore)
+               signingConfigs.getByName("release")
+           else
+               signingConfigs.getByName("debug")
        }
    }
 }
