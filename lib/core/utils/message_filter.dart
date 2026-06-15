@@ -1,0 +1,125 @@
+/// Utility for filtering chat messages before display in the session chat view.
+///
+/// Hermes sessions accumulate many internal messages that are not useful to an
+/// end-user reading a conversation: tool-call results, empty placeholders,
+/// model thinking/reasoning blocks, and context-compression summaries. This
+/// filter removes them and keeps only the human-readable conversation turns.
+class MessageFilter {
+  /// Default maximum number of messages to show after filtering.
+  static const int defaultMaxMessages = 10;
+
+  /// Filter, clean, and truncate [messages] for display.
+  ///
+  /// The pipeline has three stages:
+  /// 1. **Filter** — drop tool results, empty content, pure-think messages,
+  ///    context-compression artifacts, and live tool-progress placeholders.
+  /// 2. **Clean** — strip `<think>…</think>` reasoning blocks from any
+  ///    remaining message, then drop messages that became empty afterwards.
+  /// 3. **Truncate** — keep only the last [maxMessages] entries.
+  static List<Map<String, dynamic>> filterForDisplay(
+    List<Map<String, dynamic>> messages, {
+    int maxMessages = defaultMaxMessages,
+  }) {
+    // ── Stage 1: filter out unwanted message types ──
+    final filtered = messages.where((msg) {
+      final role = (msg['role'] as String?) ?? '';
+      final content = (msg['content']?.toString() ?? '').trim();
+
+      // Tool result messages (OpenAI format: role == "tool" + tool_call_id)
+      if (role == 'tool') return false;
+      if (msg.containsKey('tool_call_id')) return false;
+
+      // Live tool-progress placeholders inserted during streaming
+      if (role == 'tool_progress') return false;
+
+      // Empty messages (null, empty, or whitespace-only content)
+      if (content.isEmpty) return false;
+
+      // Messages whose content is entirely a <think> reasoning block
+      if (_isEntirelyThinkContent(content)) return false;
+
+      // Context-compression / summarization artifacts
+      if (_isContextCompression(role, content, msg)) return false;
+
+      return true;
+    }).toList();
+
+    // ── Stage 2: strip <think> blocks and re-check emptiness ──
+    final cleaned = <Map<String, dynamic>>[];
+    for (final msg in filtered) {
+      final content = msg['content']?.toString() ?? '';
+      final stripped = _stripThinkTags(content).trim();
+      if (stripped.isEmpty) continue; // became empty after stripping
+      cleaned.add({...msg, 'content': stripped});
+    }
+
+    // ── Stage 3: keep only the latest N messages ──
+    if (cleaned.length > maxMessages) {
+      return cleaned.sublist(cleaned.length - maxMessages);
+    }
+    return cleaned;
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────────
+
+  /// True when [content] starts with `<think>` and contains nothing outside
+  /// the think block (handles both closed and unclosed tags from streaming).
+  static bool _isEntirelyThinkContent(String content) {
+    final trimmed = content.trim();
+    if (!trimmed.toLowerCase().startsWith('<think>')) return false;
+    final closeIndex = trimmed.toLowerCase().indexOf('</think>');
+    if (closeIndex == -1) return true; // unclosed — all think
+    final afterClose = trimmed.substring(closeIndex + '</think>'.length).trim();
+    return afterClose.isEmpty;
+  }
+
+  /// Remove all `<think>…</think>` blocks (case-insensitive).
+  /// Also removes trailing unclosed `<think>` blocks (streaming artifacts).
+  static String _stripThinkTags(String content) {
+    // Closed blocks: <think> ... </think>
+    var result = content.replaceAll(
+      RegExp(r'<think>[\s\S]*?</think>', caseSensitive: false),
+      '',
+    );
+    // Trailing unclosed block: <think> ... (to end of string)
+    result = result.replaceAll(
+      RegExp(r'<think>[\s\S]*$', caseSensitive: false),
+      '',
+    );
+    return result;
+  }
+
+  /// Detect context-compression / conversation-summarization messages.
+  static bool _isContextCompression(
+    String role,
+    String content,
+    Map<String, dynamic> msg,
+  ) {
+    // System messages containing compression markers
+    if (role == 'system') {
+      final lower = content.toLowerCase();
+      const markers = [
+        'context compress',
+        'context compression',
+        'conversation summary',
+        'context window',
+        'summary of previous',
+        'compacted conversation',
+        'truncated conversation',
+        'previous messages were compressed',
+      ];
+      for (final marker in markers) {
+        if (lower.contains(marker)) return true;
+      }
+    }
+
+    // Explicit metadata flags
+    if (msg['type'] == 'compression' ||
+        msg['type'] == 'context_compress' ||
+        msg['metadata']?['compressed'] == true) {
+      return true;
+    }
+
+    return false;
+  }
+}
