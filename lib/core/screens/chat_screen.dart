@@ -10,6 +10,7 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../services/connection_manager.dart';
+import '../utils/message_filter.dart';
 import '../utils/responsive.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -219,7 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
       final messages = await _client.getMessages(widget.session.id);
       if (!mounted) return;
       setState(() {
-        _messages = messages;
+        _messages = MessageFilter.filterForDisplay(messages);
         _loading = false;
       });
       _scrollToBottom();
@@ -292,7 +293,7 @@ class _ChatScreenState extends State<ChatScreen> {
           final messages = await _client.getMessages(widget.session.id);
           if (!mounted) return;
           setState(() {
-            _messages = messages;
+            _messages = MessageFilter.filterForDisplay(messages);
             _streaming = false;
             _sending = false;
             _showScrollToBottom = false;
