@@ -33,7 +33,11 @@ class MessageFilter {
       if (role == 'tool_progress') return false;
 
       // Empty messages (null, empty, or whitespace-only content)
-      if (content.isEmpty) return false;
+      // except: keep messages with tool_calls — they show what the agent is doing
+      if (content.isEmpty &&
+          (msg['tool_calls'] == null && msg['response_item_id'] == null)) {
+        return false;
+      }
 
       // Messages whose content is entirely a <think> reasoning block
       if (_isEntirelyThinkContent(content)) return false;
@@ -49,7 +53,8 @@ class MessageFilter {
     for (final msg in filtered) {
       final content = msg['content']?.toString() ?? '';
       final stripped = _stripThinkTags(content).trim();
-      if (stripped.isEmpty) continue; // became empty after stripping
+      final hasToolCalls = msg['tool_calls'] != null;
+      if (stripped.isEmpty && !hasToolCalls) continue; // became empty after stripping, no tool info
       cleaned.add({...msg, 'content': stripped});
     }
 
