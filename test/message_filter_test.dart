@@ -21,9 +21,13 @@ void main() {
     test('keeps assistant tool-call messages even with empty content', () {
       final messages = [
         {'role': 'user', 'content': 'Read the file'},
-        {'role': 'assistant', 'content': '', 'tool_calls': [
-          {'id': 'call_1', 'type': 'function', 'function': {'name': 'read_file'}},
-        ]},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'call_1', 'type': 'function', 'function': {'name': 'read_file'}},
+          ],
+        },
         {'role': 'tool', 'content': 'file contents here', 'tool_call_id': 'call_1'},
         {'role': 'assistant', 'content': 'The file says hello.'},
       ];
@@ -100,7 +104,10 @@ void main() {
     test('strips think blocks from mixed content', () {
       final messages = [
         {'role': 'user', 'content': 'Explain X'},
-        {'role': 'assistant', 'content': '<think>Internal reasoning here.</think>Here is the explanation of X.'},
+        {
+          'role': 'assistant',
+          'content': '<think>Internal reasoning here.</think>Here is the explanation of X.',
+        },
       ];
       final result = MessageFilter.filterForDisplay(messages);
       expect(result.length, 2);
@@ -127,15 +134,212 @@ void main() {
       expect(result.length, 2);
     });
 
-    test('truncates to latest 10 messages', () {
+    // ── New: context compaction injected as user role ──
+
+    test('filters out [CONTEXT COMPACTION] injected as user role', () {
+      final compactionBody =
+          '[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted '
+          'into the summary below.\n\n## Historical Task Snapshot\nDo something.\n\n'
+          '--- END OF CONTEXT SUMMARY ---';
+      final messages = [
+        {'role': 'user', 'content': compactionBody},
+        {'role': 'user', 'content': 'What is the weather?'},
+        {'role': 'assistant', 'content': 'Sunny!'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages);
+      // Compaction handoff must be dropped; only real conversation survives.
+      expect(result.length, 2);
+      expect(result[0]['content'], 'What is the weather?');
+      expect(result[1]['content'], 'Sunny!');
+    });
+
+    test('filters out [CONTEXT COMPACTION] injected as assistant role', () {
+      final compactionBody =
+          '[CONTEXT COMPACTION — REFERENCE ONLY] Summary of previous work.\n'
+          '## Historical In-Progress State\nTask A in progress.\n'
+          '--- END OF CONTEXT SUMMARY ---';
+      final messages = [
+        {'role': 'assistant', 'content': compactionBody},
+        {'role': 'user', 'content': 'Continue'},
+        {'role': 'assistant', 'content': 'OK'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages);
+      expect(result.length, 2);
+    });
+
+    test('does NOT drop normal messages mentioning "compaction" in passing', () {
+      // Only one marker → below the 2-hit threshold → message kept.
+      final messages = [
+        {'role': 'user', 'content': 'What is context compression about?'},
+        {'role': 'assistant', 'content': 'It reduces token usage.'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages);
+      expect(result.length, 2);
+    });
+
+    // ── New: tool-call label folding ──
+
+    test('folds 3+ consecutive tool-call labels into a summary bubble', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'Fix the bug'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c1', 'type': 'function', 'function': {'name': 'read_file'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c2', 'type': 'function', 'function': {'name': 'patch'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c3', 'type': 'function', 'function': {'name': 'execute_code'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c4', 'type': 'function', 'function': {'name': 'patch'}},
+          ],
+        },
+        {'role': 'assistant', 'content': 'Done!'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages, maxMessages: 100);
+      // user(1) + folded(1) + assistant text(1) = 3
+      expect(result.length, 3);
+      expect(result[1]['content'], '🔧 4 tool calls (read_file, patch, execute_code, patch)');
+      expect(result[1]['folded_tool_calls'], isTrue);
+      expect(result[1]['folded_count'], 4);
+    });
+
+    test('does NOT fold when only 1-2 consecutive tool-call labels', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'Read it'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c1', 'type': 'function', 'function': {'name': 'read_file'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c2', 'type': 'function', 'function': {'name': 'patch'}},
+          ],
+        },
+        {'role': 'assistant', 'content': 'All done.'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages, maxMessages: 100);
+      // user(1) + tool1(1) + tool2(1) + assistant text(1) = 4
+      expect(result.length, 4);
+      expect(result[1]['content'], '🔧 read_file');
+      expect(result[2]['content'], '🔧 patch');
+    });
+
+    test('folds separately when tool groups are interrupted by text', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'Do stuff'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c1', 'type': 'function', 'function': {'name': 'read_file'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c2', 'type': 'function', 'function': {'name': 'patch'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c3', 'type': 'function', 'function': {'name': 'read_file'}},
+          ],
+        },
+        {'role': 'assistant', 'content': 'Let me verify...'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c4', 'type': 'function', 'function': {'name': 'execute_code'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c5', 'type': 'function', 'function': {'name': 'execute_code'}},
+          ],
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls': [
+            {'id': 'c6', 'type': 'function', 'function': {'name': 'execute_code'}},
+          ],
+        },
+        {'role': 'assistant', 'content': 'Done!'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages, maxMessages: 100);
+      // user(1) + folded1(1, 3 tools) + text(1) + folded2(1, 3 tools) + text(1) = 5
+      expect(result.length, 5);
+      expect(result[1]['content'], '🔧 3 tool calls (read_file, patch, read_file)');
+      expect(result[3]['content'], '🔧 3 tool calls (execute_code, execute_code, execute_code)');
+    });
+
+    test('handles JSON-string tool_calls in fold', () {
+      final messages = <Map<String, dynamic>>[
+        {'role': 'user', 'content': 'Go'},
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls':
+              '[{"id":"c1","type":"function","function":{"name":"terminal"}}]',
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls':
+              '[{"id":"c2","type":"function","function":{"name":"read_file"}}]',
+        },
+        {
+          'role': 'assistant',
+          'content': '',
+          'tool_calls':
+              '[{"id":"c3","type":"function","function":{"name":"patch"}}]',
+        },
+        {'role': 'assistant', 'content': 'Finished.'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages, maxMessages: 100);
+      expect(result.length, 3);
+      expect(result[1]['content'], '🔧 3 tool calls (terminal, read_file, patch)');
+    });
+
+    // ── Updated: defaultMaxMessages is now 30 ──
+
+    test('truncates to latest 30 messages by default', () {
       final messages = <Map<String, dynamic>>[];
-      for (var i = 0; i < 20; i++) {
+      for (var i = 0; i < 50; i++) {
         messages.add({'role': i.isEven ? 'user' : 'assistant', 'content': 'Message $i'});
       }
       final result = MessageFilter.filterForDisplay(messages);
-      expect(result.length, 10);
-      expect(result.first['content'], 'Message 10');
-      expect(result.last['content'], 'Message 19');
+      expect(result.length, 30);
+      expect(result.first['content'], 'Message 20');
+      expect(result.last['content'], 'Message 49');
     });
 
     test('respects custom maxMessages parameter', () {
@@ -156,7 +360,10 @@ void main() {
         {'role': 'tool', 'content': 'result', 'tool_call_id': 'c1'},
         {'role': 'assistant', 'content': '<think>hmm</think>'},
         {'role': 'user', 'content': 'What can you do?'},
-        {'role': 'assistant', 'content': '<think>I should explain my capabilities</think>I can help with many tasks.'},
+        {
+          'role': 'assistant',
+          'content': '<think>I should explain my capabilities</think>I can help with many tasks.',
+        },
         {'role': 'tool', 'content': 'another result', 'tool_call_id': 'c2'},
         {'role': 'assistant', 'content': ''},
         {'role': 'user', 'content': 'Thanks!'},

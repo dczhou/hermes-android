@@ -34,6 +34,14 @@ class _ChatScreenState extends State<ChatScreen> {
   late final ApiClient _client;
   late final GatewayChatClient _gateway;
 
+  // Full filtered message list (before truncation) and how many we currently
+  // show from the tail. Scrolling to the top reveals a "Load older" button
+  // that grows _displayCount so earlier conversation turns become visible.
+  List<Map<String, dynamic>> _allFiltered = [];
+  int _displayCount = MessageFilter.defaultMaxMessages;
+  static const int _loadMoreStep = 30;
+  bool _loadingMore = false;
+
   // Chat sending state
   final _textController = TextEditingController();
   bool _sending = false;
@@ -219,8 +227,14 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final messages = await _client.getMessages(widget.session.id);
       if (!mounted) return;
+      final allFiltered = MessageFilter.filterForDisplay(
+        messages,
+        maxMessages: messages.length,
+      );
       setState(() {
-        _messages = MessageFilter.filterForDisplay(messages);
+        _allFiltered = allFiltered;
+        _displayCount = MessageFilter.defaultMaxMessages;
+        _messages = _sliceFromTail(allFiltered, _displayCount);
         _loading = false;
       });
       _scrollToBottom();
@@ -230,6 +244,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (errStr.contains('404') || errStr.contains('not found')) {
         setState(() {
           _messages = [];
+          _allFiltered = [];
           _loading = false;
         });
         return;
@@ -239,6 +254,50 @@ class _ChatScreenState extends State<ChatScreen> {
         _loading = false;
       });
     }
+  }
+
+  /// Return the last [count] entries from [messages], or all of them if
+  /// fewer than [count] exist.
+  static List<Map<String, dynamic>> _sliceFromTail(
+    List<Map<String, dynamic>> messages,
+    int count,
+  ) {
+    if (messages.length <= count) return List.of(messages);
+    return messages.sublist(messages.length - count);
+  }
+
+  /// Number of older filtered messages available but not yet displayed.
+  int get _olderRemaining {
+    final diff = _allFiltered.length - _messages.length;
+    return diff > 0 ? diff : 0;
+  }
+
+  /// Grow the visible window by [_loadMoreStep] entries and preserve scroll
+  /// position so the user doesn't get jumped around.
+  Future<void> _loadOlder() async {
+    if (_loadingMore || _olderRemaining == 0) return;
+
+    // Capture the current scroll geometry so we can keep the viewport stable
+    // after prepending older messages.
+    final hadClients = _scrollController.hasClients;
+    final oldExtent = hadClients ? _scrollController.position.maxScrollExtent : 0.0;
+    final oldOffset = hadClients ? _scrollController.offset : 0.0;
+
+    setState(() {
+      _loadingMore = true;
+      _displayCount = (_displayCount + _loadMoreStep).clamp(0, _allFiltered.length);
+      _messages = _sliceFromTail(_allFiltered, _displayCount);
+    });
+
+    // Wait for the frame that lays out the new (taller) list, then adjust
+    // the offset so the previously-visible top item stays in the viewport.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final newExtent = _scrollController.position.maxScrollExtent;
+      final delta = newExtent - oldExtent;
+      _scrollController.jumpTo(oldOffset + delta);
+      setState(() => _loadingMore = false);
+    });
   }
 
   /// Send message via SSE streaming (Gateway API Server).
@@ -292,8 +351,13 @@ class _ChatScreenState extends State<ChatScreen> {
         try {
           final messages = await _client.getMessages(widget.session.id);
           if (!mounted) return;
+          final allFiltered = MessageFilter.filterForDisplay(
+            messages,
+            maxMessages: messages.length,
+          );
           setState(() {
-            _messages = MessageFilter.filterForDisplay(messages);
+            _allFiltered = allFiltered;
+            _messages = _sliceFromTail(allFiltered, _displayCount);
             _streaming = false;
             _sending = false;
             _showScrollToBottom = false;
@@ -559,12 +623,23 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
+    final olderRemaining = _olderRemaining;
+    final showLoadOlder = olderRemaining > 0;
+
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.only(bottom: 4),
-      itemCount: _messages.length,
+      itemCount: _messages.length + (showLoadOlder ? 1 : 0),
       itemBuilder: (context, index) {
-        final msg = _messages[index];
+        if (showLoadOlder && index == 0) {
+          return _LoadOlderButton(
+            remaining: olderRemaining,
+            loading: _loadingMore,
+            onTap: _loadOlder,
+          );
+        }
+        final msgIndex = showLoadOlder ? index - 1 : index;
+        final msg = _messages[msgIndex];
         final role = (msg['role'] as String?) ?? 'assistant';
         final content = (msg['content'] as String?) ?? '';
         final isUser = role == 'user';
@@ -734,6 +809,67 @@ class _MessageBubble extends StatelessWidget {
           : MainAxisAlignment.start,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [bubble],
+    );
+  }
+}
+
+/// A centered "Load older messages" chip rendered as the first item in the
+/// chat list when older filtered messages exist but aren't yet displayed.
+class _LoadOlderButton extends StatelessWidget {
+  final int remaining;
+  final bool loading;
+  final VoidCallback onTap;
+
+  const _LoadOlderButton({
+    required this.remaining,
+    required this.loading,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: loading ? null : onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: loading
+                ? SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.expand_less,
+                        size: 18,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Load older ($remaining remaining)',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onPrimaryContainer,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
+      ),
     );
   }
 }
