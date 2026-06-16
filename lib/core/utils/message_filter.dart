@@ -75,23 +75,28 @@ class MessageFilter {
   // ── Private helpers ──────────────────────────────────────────────────
 
   /// Extract a human-readable display label from tool_calls.
-  /// [toolCalls] may be a List<Map> or a JSON-stringified List.
-  static String _toolCallsLabel(dynamic toolCalls) {
+  /// [toolCalls] may be a List<Map> or a JSON-encoded String.
+  static String _toolCallsLabel(Object? toolCalls) {
+    List<Object?>? calls;
     try {
-      List? calls;
-      if (toolCalls is List) {
+      if (toolCalls is List<Object?>) {
         calls = toolCalls;
       } else if (toolCalls is String) {
-        calls = jsonDecode(toolCalls);
-      }
-      if (calls is List && calls.isNotEmpty) {
-        final first = calls[0];
-        if (first is Map) {
-          final name = first['function']?['name'] ?? first['name'] ?? 'tool';
-          return '🔧 $name';
+        final decoded = jsonDecode(toolCalls);
+        if (decoded is List) {
+          calls = decoded.cast<Object?>();
         }
       }
-    } catch (_) {}
+      if (calls != null && calls.isNotEmpty) {
+        final first = calls.first;
+        if (first is Map) {
+          final name = first['function']?['name'] ?? first['name'] ?? 'tool';
+          return '🔧 ${name}';
+        }
+      }
+    } catch (_) {
+      // not a valid JSON List — return default label below
+    }
     return '🔧 tool';
   }
 
