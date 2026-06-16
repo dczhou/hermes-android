@@ -48,6 +48,10 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::No KEYSTORE_BASE64 secret found — build will use debug signing."
+            exit 0
+          fi
           echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
           echo "storePassword=$STORE_PASSWORD" > key.properties
           echo "keyPassword=$KEY_PASSWORD" >> key.properties
