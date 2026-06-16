@@ -28,11 +28,12 @@ void main() {
         {'role': 'assistant', 'content': 'The file says hello.'},
       ];
       final result = MessageFilter.filterForDisplay(messages);
-      // tool-call assistant message is kept (has tool_calls), tool result filtered
+      // tool-call assistant message is kept (has tool_calls)
+      // and rendered with a tool-call label instead of empty content
       expect(result.length, 3);
       expect(result[0]['role'], 'user');
       expect(result[1]['role'], 'assistant');
-      expect(result[1]['content'], isEmpty);
+      expect(result[1]['content'], '🔧 read_file');
       expect(result[1]['tool_calls'], isNotNull);
       expect(result[2]['content'], 'The file says hello.');
     });

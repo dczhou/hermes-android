@@ -4,6 +4,8 @@
 /// end-user reading a conversation: tool-call results, empty placeholders,
 /// model thinking/reasoning blocks, and context-compression summaries. This
 /// filter removes them and keeps only the human-readable conversation turns.
+import 'dart:convert';
+
 class MessageFilter {
   /// Default maximum number of messages to show after filtering.
   static const int defaultMaxMessages = 10;
@@ -55,7 +57,12 @@ class MessageFilter {
       final stripped = _stripThinkTags(content).trim();
       final hasToolCalls = msg['tool_calls'] != null;
       if (stripped.isEmpty && !hasToolCalls) continue; // became empty after stripping, no tool info
-      cleaned.add({...msg, 'content': stripped});
+      cleaned.add({
+        ...msg,
+        'content': stripped.isEmpty && hasToolCalls
+            ? _toolCallsLabel(msg['tool_calls'])
+            : stripped,
+      });
     }
 
     // ── Stage 3: keep only the latest N messages ──
@@ -66,6 +73,27 @@ class MessageFilter {
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
+
+  /// Extract a human-readable display label from tool_calls.
+  /// [toolCalls] may be a List<Map> or a JSON-stringified List.
+  static String _toolCallsLabel(dynamic toolCalls) {
+    try {
+      List? calls;
+      if (toolCalls is List) {
+        calls = toolCalls;
+      } else if (toolCalls is String) {
+        calls = jsonDecode(toolCalls);
+      }
+      if (calls is List && calls.isNotEmpty) {
+        final first = calls[0];
+        if (first is Map) {
+          final name = first['function']?['name'] ?? first['name'] ?? 'tool';
+          return '🔧 $name';
+        }
+      }
+    } catch (_) {}
+    return '🔧 tool';
+  }
 
   /// True when [content] starts with `<think>` and contains nothing outside
   /// the think block (handles both closed and unclosed tags from streaming).
