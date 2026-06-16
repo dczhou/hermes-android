@@ -1,4 +1,4 @@
-package com.hermesagent.hermes_android
+package com.hermesagent.geohome
 
 import io.flutter.embedding.android.FlutterActivity
 
