@@ -83,13 +83,13 @@ class MessageFilter {
         calls = toolCalls;
       } else if (toolCalls is String) {
         final decoded = jsonDecode(toolCalls);
-        if (decoded is List) {
-          calls = decoded.cast<Object?>();
+        if (decoded is List<Object?>) {
+          calls = decoded;
         }
       }
       if (calls != null && calls.isNotEmpty) {
         final first = calls.first;
-        if (first is Map) {
+        if (first is Map<dynamic, dynamic>) {
           final name = first['function']?['name'] ?? first['name'] ?? 'tool';
           return '🔧 ${name}';
         }
