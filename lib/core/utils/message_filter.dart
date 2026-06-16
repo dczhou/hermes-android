@@ -1,9 +1,7 @@
+import 'dart:convert';
+
 /// Utility for filtering chat messages before display in the session chat view.
-///
-/// Hermes sessions accumulate many internal messages that are not useful to an
-/// end-user reading a conversation: tool-call results, empty placeholders,
-/// model thinking/reasoning blocks, and context-compression summaries. This
-/// filter removes them and keeps only the human-readable conversation turns.
+
 class MessageFilter {
   /// Default maximum number of messages to show after filtering.
   static const int defaultMaxMessages = 10;
@@ -33,7 +31,11 @@ class MessageFilter {
       if (role == 'tool_progress') return false;
 
       // Empty messages (null, empty, or whitespace-only content)
-      if (content.isEmpty) return false;
+      // except: keep messages with tool_calls — they show what the agent is doing
+      if (content.isEmpty &&
+          (msg['tool_calls'] == null && msg['response_item_id'] == null)) {
+        return false;
+      }
 
       // Messages whose content is entirely a <think> reasoning block
       if (_isEntirelyThinkContent(content)) return false;
@@ -49,8 +51,14 @@ class MessageFilter {
     for (final msg in filtered) {
       final content = msg['content']?.toString() ?? '';
       final stripped = _stripThinkTags(content).trim();
-      if (stripped.isEmpty) continue; // became empty after stripping
-      cleaned.add({...msg, 'content': stripped});
+      final hasToolCalls = msg['tool_calls'] != null;
+      if (stripped.isEmpty && !hasToolCalls) continue; // became empty after stripping, no tool info
+      cleaned.add({
+        ...msg,
+        'content': stripped.isEmpty && hasToolCalls
+            ? _toolCallsLabel(msg['tool_calls'])
+            : stripped,
+      });
     }
 
     // ── Stage 3: keep only the latest N messages ──
@@ -61,6 +69,32 @@ class MessageFilter {
   }
 
   // ── Private helpers ──────────────────────────────────────────────────
+
+  /// Extract a human-readable display label from tool_calls.
+  /// [toolCalls] may be a List<Map> or a JSON-encoded String.
+  static String _toolCallsLabel(Object? toolCalls) {
+    List<Object?>? calls;
+    try {
+      if (toolCalls is List<Object?>) {
+        calls = toolCalls;
+      } else if (toolCalls is String) {
+        final decoded = jsonDecode(toolCalls);
+        if (decoded is List<Object?>) {
+          calls = decoded;
+        }
+      }
+      if (calls != null && calls.isNotEmpty) {
+        final first = calls.first;
+        if (first is Map<dynamic, dynamic>) {
+          final name = first['function']?['name'] ?? first['name'] ?? 'tool';
+          return '🔧 $name';
+        }
+      }
+    } catch (_) {
+      // not a valid JSON List — return default label below
+    }
+    return '🔧 tool';
+  }
 
   /// True when [content] starts with `<think>` and contains nothing outside
   /// the think block (handles both closed and unclosed tags from streaming).

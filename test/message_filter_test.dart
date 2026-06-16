@@ -18,7 +18,7 @@ void main() {
       expect(result[1]['content'], 'Hi there!');
     });
 
-    test('filters out tool result messages', () {
+    test('keeps assistant tool-call messages even with empty content', () {
       final messages = [
         {'role': 'user', 'content': 'Read the file'},
         {'role': 'assistant', 'content': '', 'tool_calls': [
@@ -28,10 +28,26 @@ void main() {
         {'role': 'assistant', 'content': 'The file says hello.'},
       ];
       final result = MessageFilter.filterForDisplay(messages);
-      expect(result.length, 2);
+      // tool-call assistant message is kept (has tool_calls)
+      // and rendered with a tool-call label instead of empty content
+      expect(result.length, 3);
       expect(result[0]['role'], 'user');
       expect(result[1]['role'], 'assistant');
-      expect(result[1]['content'], 'The file says hello.');
+      expect(result[1]['content'], '🔧 read_file');
+      expect(result[1]['tool_calls'], isNotNull);
+      expect(result[2]['content'], 'The file says hello.');
+    });
+
+    test('filters out tool result messages', () {
+      final messages = [
+        {'role': 'user', 'content': 'question'},
+        {'role': 'tool', 'content': 'result data', 'tool_call_id': 'c1'},
+        {'role': 'assistant', 'content': 'answer'},
+      ];
+      final result = MessageFilter.filterForDisplay(messages);
+      expect(result.length, 2);
+      expect(result[0]['role'], 'user');
+      expect(result[1]['content'], 'answer');
     });
 
     test('filters out messages with tool_call_id regardless of role', () {
