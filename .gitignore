@@ -47,3 +47,8 @@ app.*.map.json
 
 # Local keystore properties
 /key.properties
+
+# Temporary scripts
+create_pr.py
+get_logs.py
+set_secrets.py
