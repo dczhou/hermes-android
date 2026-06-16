@@ -1,10 +1,6 @@
-/// Utility for filtering chat messages before display in the session chat view.
-///
-/// Hermes sessions accumulate many internal messages that are not useful to an
-/// end-user reading a conversation: tool-call results, empty placeholders,
-/// model thinking/reasoning blocks, and context-compression summaries. This
-/// filter removes them and keeps only the human-readable conversation turns.
 import 'dart:convert';
+
+/// Utility for filtering chat messages before display in the session chat view.
 
 class MessageFilter {
   /// Default maximum number of messages to show after filtering.
@@ -91,7 +87,7 @@ class MessageFilter {
         final first = calls.first;
         if (first is Map<dynamic, dynamic>) {
           final name = first['function']?['name'] ?? first['name'] ?? 'tool';
-          return '🔧 ${name}';
+          return '🔧 $name';
         }
       }
     } catch (_) {
