@@ -38,7 +38,11 @@ class MessageFilter {
 
       // Tool result messages (OpenAI format: role == "tool" + tool_call_id)
       if (role == 'tool') return false;
-      if (msg.containsKey('tool_call_id')) return false;
+      // Fix: check VALUE not key existence.
+      // The API server returns tool_call_id: null for non-tool messages,
+      // and Dart's containsKey() returns true even for null values,
+      // causing ALL messages to be filtered out.
+      if (msg['tool_call_id'] != null) return false;
 
       // Live tool-progress placeholders inserted during streaming
       if (role == 'tool_progress') return false;
